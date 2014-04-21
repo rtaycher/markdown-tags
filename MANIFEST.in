@@ -1,0 +1,4 @@
+include markdown_tags/VERSION
+include LICENSE
+include README.md
+include requirements.txt

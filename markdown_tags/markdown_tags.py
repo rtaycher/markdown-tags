@@ -1,6 +1,7 @@
 # !/usr/bin/env python
-# 
+#
 import collections
+
 import enum
 
 
@@ -8,25 +9,10 @@ class MarkdownFormats(enum.Enum):
     basic = "basic"
     reddit = "reddit"
 
-
-def MFO_tags_to_markdown_other_types_to_str(obj, opt_ctx):
-    if isinstance(obj, MarkdownFormattingObject):
-        return obj.__tags_to_markdown(opt_ctx)
-    elif isinstance(obj, basestring):
-        return obj
-    else:
-        return str(obj)
-
-
 class _MDTagsContext(object):
-    def __init__(self, recover, format_md, tree_level=1):
+    def __init__(self, recover, format_md):
         self.recover = recover
         self.format_md = format_md
-        self.tree_level = tree_level
-
-    def one_level_down(self):
-        copy_changed = _MDTagsContext(self.recover, self.format_md, self.tree_level + 1)
-        return copy_changed
 
 
 class IllegalMarkdownFormattingException(Exception):
@@ -49,17 +35,18 @@ class MarkdownFormattingObject(object):
     def _check_recursive(self, banned_class_exception_tuples, opt_ctx):
         my_type = type(self)
 
-        possible_match = [t for t in banned_class_exception_tuples if my_type == t[0]]
-        if possible_match:
-            raise possible_match[0][1](self)
-        banned_class_exception_tuples = (banned_class_exception_tuples +
-                                         [(my_type, lambda s:
-                                            IllegalMarkdownFormattingException(
-                                                "Illegal nested MarkdownFormattingTags class " +
-                                                str(type(self)) + ": " + repr(self)))])
-        if my_type != BlockQuote:
-            for item in self.contents:
-                item._check_recursive(banned_class_exception_tuples, opt_ctx)
+        if not isinstance(self, _RepeatableBlockLevel):
+            possible_match = [t for t in banned_class_exception_tuples if my_type == t[0]]
+            if possible_match:
+                raise possible_match[0][1](self)
+            banned_class_exception_tuples = (banned_class_exception_tuples +
+                                             [(my_type, lambda s:
+                                             IllegalMarkdownFormattingException(
+                                                 "Illegal nested MarkdownFormattingTags class " +
+                                                 str(type(self))))])
+
+        for item in self.contents:
+            item._check_recursive(banned_class_exception_tuples, opt_ctx)
 
 
 class MFOWrapper(MarkdownFormattingObject):
@@ -76,11 +63,9 @@ class MFOWrapper(MarkdownFormattingObject):
         return str(self.contents)
 
 
-class MD(MarkdownFormattingObject):
+class Blocks(MarkdownFormattingObject):
     def _tags_to_markdown(self, opt_ctx):
-        if not opt_ctx.recover:
-            self._check_recursive([], opt_ctx)
-        return "\n\n".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents)
+        return "\n\n".join(c._tags_to_markdown(opt_ctx) for c in self.contents)
 
     def _check_recursive(self, banned_class_exception_tuples, opt_ctx):
         second_level_non_block_elements = [c for c in self.contents
@@ -89,7 +74,14 @@ class MD(MarkdownFormattingObject):
             raise IllegalMarkdownFormattingException(
                 "Only block elements are allowed as second level elements," +
                 " not allowed:" + str(second_level_non_block_elements))
-        super(MD, self)._check_recursive(banned_class_exception_tuples, opt_ctx)
+        super(Blocks, self)._check_recursive(banned_class_exception_tuples, opt_ctx)
+
+
+class MD(Blocks):
+    def _tags_to_markdown(self, opt_ctx):
+        if not opt_ctx.recover:
+            self._check_recursive([], opt_ctx)
+        return super(MD, self)._tags_to_markdown(opt_ctx)
 
     def tags_to_markdown(self, recover, format_md):
         opt_ctx = _MDTagsContext(recover=recover, format_md=format_md)
@@ -97,6 +89,10 @@ class MD(MarkdownFormattingObject):
 
 
 class BlockLevel(MarkdownFormattingObject):
+    pass
+
+
+class _RepeatableBlockLevel(BlockLevel):
     pass
 
 
@@ -125,49 +121,70 @@ class Header(BlockLevel):
         return repr(type(self)) + self.level + "(" + repr(self.contents) + ")"
 
     def _tags_to_markdown(self, opt_ctx):
-        return ("#" * self.level) + "".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents)
+        return ("#" * self.level) + "".join(c._tags_to_markdown(opt_ctx) for c in self.contents)
 
 
-# 1
 class Italic(MarkdownFormattingObject):
     def _tags_to_markdown(self, opt_ctx):
-        return "*" + "\n\n".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents) + "*"
+        return "*" + "".join(c._tags_to_markdown(opt_ctx) for c in self.contents) + "*"
 
 
-# 1
 class Bold(MarkdownFormattingObject):
     def _tags_to_markdown(self, opt_ctx):
-        return "**" + "".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents) + "**"
+        return "**" + "".join(c._tags_to_markdown(opt_ctx) for c in self.contents) + "**"
 
+class _List(_RepeatableBlockLevel):
+    @classmethod
+    def with_title(cls, title, *contents):
+        obj = cls(*contents)
+        obj.title = title
+        return obj
+    def __init__(self, *contents):
+        self.title = ""
+        super(_List, self).__init__(*contents)
 
-# list
-class UnorderedList(BlockLevel):
+class UnorderedList(_List):
     def _tags_to_markdown(self, opt_ctx):
-        if opt_ctx.tree_level != 2:
-            return _prepend_to_each_line("    ", "\n".join("+" + " " + c._tags_to_markdown(opt_ctx.one_level_down())
-                                                           for c in self.contents))
-        else:
-            return "\n".join("+" + " " + c._tags_to_markdown(opt_ctx.one_level_down())
-                             for c in self.contents)
+        res = ""
+        if self.title:
+            res += self.title + "\n\n"
 
+        for list_item in self.contents:
+            first_line = True
+            for line in list_item._tags_to_markdown(opt_ctx).split("\n"):
+                if first_line:
+                    if isinstance(list_item, _List) and not list_item.title:
+                        res += "\n"
+                    res += "+ " + line + "\n"
+                    first_line = False
+                else:
+                    res += "    " + line + "\n"
+            res += "\n"
+        return res
 
-#list
-class OrderedList(BlockLevel):
+class OrderedList(_List):
     def _tags_to_markdown(self, opt_ctx):
-        if opt_ctx.tree_level != 2:
-            return _prepend_to_each_line("    ", "\n".join(str(i) + ". " + c._tags_to_markdown(opt_ctx.one_level_down())
-                                                           for (i, c) in enumerate(self.contents, 1)))
+        res = ""
+        if self.title:
+            res += self.title + "\n\n"
 
-        else:
-            return "\n".join(str(i) + ". " + c._tags_to_markdown(opt_ctx.one_level_down())
-                             for (i, c) in enumerate(self.contents, 1))
+        for (i, list_item) in enumerate(self.contents, start=1):
+            first_line = True
+            for line in list_item._tags_to_markdown(opt_ctx).split("\n"):
+                if first_line:
+                    if isinstance(list_item, _List) and not list_item.title:
+                        res += "\n"
+                    res += str(i) + ". " + line + "\n"
+                    first_line = False
+                else:
+                    res += "    " + line + "\n"
+            res += "\n"
+        return res
 
-
-#1
-class BlockQuote(BlockLevel):
+class BlockQuote(_RepeatableBlockLevel):
     def _tags_to_markdown(self, opt_ctx):
         return "\n".join(">" + line
-                         for line in "".join(c._tags_to_markdown(opt_ctx.one_level_down())
+                         for line in "".join(c._tags_to_markdown(opt_ctx)
                                              for c in self.contents).split("\n"))
 
 
@@ -184,20 +201,7 @@ class Code(BlockLevel):
 
 class Paragraph(BlockLevel):
     def _tags_to_markdown(self, opt_ctx):
-        if opt_ctx.tree_level == 2:
-            return "".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents)
-        else:
-            return "\n\n".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents)
-
-
-class Strikethrough(MarkdownFormattingObject):
-    def _tags_to_markdown(self, opt_ctx):
-        return "~~" + "".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents) + "~~"
-
-
-class Superscript(MarkdownFormattingObject):
-    def _tags_to_markdown(self, opt_ctx):
-        return "^" + "".join(c._tags_to_markdown(opt_ctx.one_level_down()) for c in self.contents) + " "
+        return "".join(c._tags_to_markdown(opt_ctx) for c in self.contents)
 
 
 class Link(MarkdownFormattingObject):
@@ -237,6 +241,7 @@ class Image(MarkdownFormattingObject):
         if opt_ctx.format_md == MarkdownFormats.reddit:
             raise IllegalMarkdownFormattingException("Reddit markdown does not allow Images")
         super(Image, self)._check_recursive(banned_class_exception_tuples, opt_ctx)
+
     def _tags_to_markdown(self, opt_ctx):
         if self.title:
             return ("![" + "".join(c._tags_to_markdown(opt_ctx) for c in self.contents) + "]"
@@ -262,7 +267,6 @@ def escape(string):
     return string
 
 
-def _prepend_to_each_line(pre, content):
-    "\n".join((pre + s for s in content.split("\n")))
+def _prepend_to_each_line(first_pre, other_pre, content):
+    "\n".join((other_pre + s for s in content.split("\n")))
 
-#tags_to_markdown(Bold(Italic("col"), Bold("q")))
