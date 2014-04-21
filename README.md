@@ -1,10 +1,8 @@
 #Markdown Tags
 -----
 
-A small library that tries to make it easy to "template" markdown without worrying about markdown syntax.
-
-Or rather then templating the idea is to have a tree structure representing a markdown snippet that you transorm
-into a string.
+A small library for writing markdown with a tree structure of python objects that you can transform into a
+markdown snippet(string).
 
 I started it by extracting some code I wrote for a reddit bot.
 
