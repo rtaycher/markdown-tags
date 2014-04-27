@@ -13,9 +13,9 @@ import shutil
 import urllib
 import stat
 
-from pyquery import PyQuery as pq
-
 sys.path.append("../..")
+
+from pyquery import PyQuery as pq
 import markdown_tags as m
 import markdown_tags.reddit_specific as rmd
 
