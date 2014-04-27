@@ -8,7 +8,7 @@ __version__ = open(os.path.join(os.path.dirname(__file__),
 
 setup(name='markdown_tags',
       version=__version__,
-      description="An API wrapper for second hand song db",
+      description="A small library for writing markdown with a tree structure of python objects that you can transform into a markdown snippet(string).",
       long_description=open("./README.md", "r").read(),
       classifiers=[
           "Development Status :: 3 - Alpha",
