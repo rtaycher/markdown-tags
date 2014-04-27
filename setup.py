@@ -4,9 +4,9 @@ from setuptools import setup, find_packages
 
 
 __version__ = open(os.path.join(os.path.dirname(__file__),
-                                "markdown_tags/VERSION")).read()
+                                "markdown_tags/VERSION")).read().strip()
 
-setup(name='second_hand_songs_wrapper',
+setup(name='markdown_tags',
       version=__version__,
       description="An API wrapper for second hand song db",
       long_description=open("./README.md", "r").read(),
