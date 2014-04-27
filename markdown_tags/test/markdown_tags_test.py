@@ -1,22 +1,114 @@
-# !/usr/bin/env python
+#!/usr/bin/env python
 # unit tests for markdown_tags
 from __future__ import print_function
 import tempfile
 import os
 import unittest
-import subprocess
 import contextlib
+import errno
+import sys
+import zipfile
+import subprocess
+import shutil
+import urllib
+import stat
 
-import enum
 from pyquery import PyQuery as pq
 
+sys.path.append("../..")
 import markdown_tags as m
 import markdown_tags.reddit_specific as rmd
 
+test_dir = os.path.abspath(os.path.dirname(__file__))
+markdown_discount_implementation_folder = os.path.join(test_dir, "markdown_implementations/discount")
+markdown_discount_implementation_configure = os.path.join(markdown_discount_implementation_folder, "configure")
+markdown_discount_binary = os.path.join(markdown_discount_implementation_folder, "bin/markdown")
+discount_zip_url = "https://github.com/Orc/discount/archive/v2.1.7.zip"
+local_discount_zip_path = os.path.join(markdown_discount_implementation_folder, "markdown-discount-v2.1.7.zip")
+discount_zip_inner_folder = "discount-2.1.7"
 
-test_dir = os.path.dirname(__file__)
-markdown_discount_binary = os.path.join(test_dir, "markdown/bin/markdown")
 
+def rmdir(top):
+    for root, dirs, files in os.walk(top, topdown=False):
+        for name in files:
+            os.remove(os.path.join(root, name))
+    for name in dirs:
+        os.rmdir(os.path.join(root, name))
+
+
+def make_directory_do_not_error_if_directory_exists(path):
+    try:
+        os.makedirs(path)
+    except OSError as ex:
+        if ex.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
+
+
+def delete_directory_recursive(path):
+    try:
+        for root, dirs, files in os.walk(path, topdown=False):
+            for name in files:
+                os.remove(os.path.join(root, name))
+            for name in dirs:
+                os.rmdir(os.path.join(root, name))
+        os.rmdir(path)
+    except OSError as ex:
+        if ex.errno == errno.ENOENT:
+            pass
+        else:
+            raise
+
+
+def string_remove_prefix(string, prefix):
+    if string.startswith(prefix):
+        return string[len(prefix):]
+
+def download_markdown_if_needed():
+    if not os.path.exists(markdown_discount_binary):
+        print("Markdown implementation Discount binary not found, trying to download and compile it.")
+        try:
+            delete_directory_recursive(markdown_discount_implementation_folder)
+            make_directory_do_not_error_if_directory_exists(markdown_discount_implementation_folder)
+        except Exception as ex:
+            print("Markdown implementation Discount binary not found " +
+                  "and could not delete and remake discount implementation folder:")
+            raise
+
+        try:
+            urllib.urlretrieve(discount_zip_url, local_discount_zip_path)
+        except Exception as ex:
+            print("Markdown implementation Discount binary not found and could not be downloaded:")
+            raise
+
+        try:
+            with zipfile.ZipFile(local_discount_zip_path) as z:
+                for f in z.namelist():
+                    if f == discount_zip_inner_folder + "/":
+                        pass
+                    if f.endswith('/'):
+                        make_directory_do_not_error_if_directory_exists(os.path.join(
+                            markdown_discount_implementation_folder, f))
+                    else:
+                        z.extract(f, path=markdown_discount_implementation_folder)
+
+            shutil.move(os.path.join(markdown_discount_implementation_folder, discount_zip_inner_folder),
+                        os.path.join(markdown_discount_implementation_folder, "src"))
+
+            configure_path = os.path.join(markdown_discount_implementation_folder, "src", "configure.sh")
+            st = os.stat(configure_path)
+            os.chmod(configure_path, st.st_mode | stat.S_IEXEC)
+
+            cmd = ("cd " + os.path.join(markdown_discount_implementation_folder, "src") + ";" +
+                   "./configure.sh --prefix=" + markdown_discount_implementation_folder + "; make; make install")
+            print("!!!!!!!!!!!!!!! Calling :  '" + cmd + "' !!!!!!!!!!!!!!!!!!!!")
+            subprocess.check_call(cmd, shell=True)
+
+            print("Compiled Discount Markdown implementation.")
+        except Exception as ex:
+            print("Markdown implementation Discount binary not found and could not compile it:")
+            raise
 
 @contextlib.contextmanager
 def context(*extra_ctx):
@@ -28,15 +120,8 @@ def context(*extra_ctx):
         raise e
 
 
-class MarkdownImplementations(enum.Enum):
-    Discount = "Discount"
-
-
-if not os.path.exists(markdown_discount_binary):
-    raise Exception("Markdown implementation Discount binary not found.")
-
-
 def compile_markdown(markdown_txt):
+    download_markdown_if_needed()
     with tempfile.NamedTemporaryFile() as src:
         src.write(markdown_txt)
         src.flush()
@@ -44,6 +129,7 @@ def compile_markdown(markdown_txt):
             subprocess.check_call([markdown_discount_binary, "-o", output_file.name, src.name])
             html_generated = output_file.read()
             return html_generated
+
 
 class Test_MarkdownTagsComplicated(unittest.TestCase):
     def test_bold_italic_text(self):
@@ -105,6 +191,7 @@ class Test_MarkdownTagsComplicated(unittest.TestCase):
                     self.assertEqual(3, len(unordered_lists))
 
                     #TODO insert a few more checks
+
 
 class Test_MarkdownTagsSingle(unittest.TestCase):
     def test_paragraphs(self):
@@ -239,4 +326,5 @@ class Test_RedditMarkdown(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    download_markdown_if_needed()
     unittest.main()
